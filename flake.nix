@@ -32,7 +32,7 @@
                 rev = "30a0ccbd141cc147eeb78bec33637796bb39a6a1";
                 sha256 = "sha256-/DCeBxXOKscAfnqrsRtqvkIPvr7g1az3Q1efjF+yJbY=";
               };
-              makeFlags = (attrs.makeFlags or []) ++ [
+              makeFlags = (attrs.makeFlags or [ ]) ++ [
                 "CFLAGS=-fno-tree-vectorize"
               ];
             });
@@ -132,8 +132,10 @@
           gdb
           valgrind
           git
+          clinfo
           nixgl.auto.nixGLDefault
-          nixgl.auto.nixGLNvidia
+          nixpkgs-fmt
+          neovim
         ];
         shellHook = ''
           prepare_sources() {
@@ -159,7 +161,9 @@
             substituteInPlace CMakeLists.txt \
               --replace ' QUIET ' ' ' \
               --replace ' QUIET)' ')' \
-              --replace 'find_package(MKL)' '# find_package(MKL)'
+              --replace 'find_package(MKL)' '# find_package(MKL)' \
+              --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
+find_package(BLAS)'
             substituteInPlace src/backend/cuda/CMakeLists.txt \
               --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
                         'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
@@ -167,7 +171,7 @@
               --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
           }
 
-          export AF_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAF_TEST_WITH_MTX_FILES=OFF -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_FORGE=OFF -DAF_BUILD_OPENCL=OFF -DAF_BUILD_CUDA=ON -DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS' -DAF_USE_RELATIVE_TEST_DIR=OFF -DCMAKE_CXX_FLAGS=-DSPDLOG_FMT_EXTERNAL=1"
+          export AF_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAF_TEST_WITH_MTX_FILES=OFF -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_FORGE=OFF -DAF_BUILD_OPENCL=ON -DAF_BUILD_CUDA=OFF -DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS' -DAF_USE_RELATIVE_TEST_DIR=OFF -DCMAKE_CXX_FLAGS=-DSPDLOG_FMT_EXTERNAL=1"
           export LD_LIBRARY_PATH=${pkgs.freeimage}/lib:${pkgs.cudaPackages_11_4.cudatoolkit}/lib64:$LD_LIBRARY_PATH
 
           export MESA_PATH=${pkgs.mesa}

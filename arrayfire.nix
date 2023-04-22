@@ -121,7 +121,9 @@ stdenv.mkDerivation rec {
     substituteInPlace CMakeLists.txt \
       --replace ' QUIET ' ' ' \
       --replace ' QUIET)' ')' \
-      --replace 'find_package(MKL)' '# find_package(MKL)'
+      --replace 'find_package(MKL)' '# find_package(MKL)' \
+      --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
+find_package(BLAS)'
     substituteInPlace src/backend/cuda/CMakeLists.txt \
       --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
                 'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
@@ -130,14 +132,24 @@ stdenv.mkDerivation rec {
   '';
 
   doCheck = true;
-  checkPhase = ''
-    export LD_LIBRARY_PATH="${forge}/lib:${freeimage}/lib:$LD_LIBRARY_PATH"
-  '' + (if withCuda then ''
-    export LD_LIBRARY_PATH="${cudaPackages.cudatoolkit}/lib64:$LD_LIBRARY_PATH"
-    AF_TRACE=all AF_PRINT_ERRORS=1 nixGL ctest -v -j1
-  '' else ''
-    AF_TRACE=all AF_PRINT_ERRORS=1 ctest -v -j1
-  '');
+  checkPhase =
+    let
+      LD_LIBRARY_PATH = concatStringSep ":" (
+        [
+          "${forge}/lib"
+          "${freeimage}/lib"
+        ]
+        ++ lib.optional withCuda "${cudaPackages.cudatoolkit}/lib64"
+      );
+      wrapper = lib.optionalString (withCuda || withOpenCL) "nixGL";
+    in
+    ''
+      export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}
+    '' + (lib.optionalString withOpenCL ''
+      export OCL_ICD_VENDORS=/etc/OpenCL/vendors:$OCL_ICD_VENDORS
+    '') + ''
+      AF_TRACE=all AF_PRINT_ERRORS=1 ${wrapper} ctest -v -j1
+    '';
 
   buildInputs = [
     blas
@@ -155,9 +167,9 @@ stdenv.mkDerivation rec {
     spdlog
   ]
   ++ (lib.optionals withCuda [
-        cudaPackages.cudatoolkit
-        cudaPackages.cudnn
-      ])
+    cudaPackages.cudatoolkit
+    cudaPackages.cudnn
+  ])
   ++ (lib.optionals withOpenCL [ mesa ocl-icd opencl-clhpp ]);
 
   nativeBuildInputs = [
