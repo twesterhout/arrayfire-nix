@@ -1,5 +1,5 @@
 {
-  description = "Reproducer for failing ArrayFire tests";
+  description = "Nix flake for ArrayFire";
 
   nixConfig = {
     extra-experimental-features = "nix-command flakes";
@@ -23,18 +23,19 @@
         inherit system;
         overlays = [
           (self: super: {
+            # We need a newer OpenBLAS for this to be fixed:
+            # https://github.com/xianyi/OpenBLAS/issues/4013
             openblas = super.openblas.overrideAttrs (attrs: rec {
-              version = "0.3.23";
+              version = "0.3.24";
               name = "${attrs.pname}-${version}";
               src = super.fetchFromGitHub {
                 owner = "xianyi";
                 repo = "OpenBLAS";
-                rev = "30a0ccbd141cc147eeb78bec33637796bb39a6a1";
-                sha256 = "sha256-/DCeBxXOKscAfnqrsRtqvkIPvr7g1az3Q1efjF+yJbY=";
+                rev = "88c205c9582b98c7d5a89ac9952bf36a019e5966";
+                sha256 = "sha256-+OuMV7+RBwghJrWsGCk5cu3Yzawkrmu0yvPE0uPP7rU=";
               };
-              makeFlags = (attrs.makeFlags or [ ]) ++ [
-                "CFLAGS=-fno-tree-vectorize"
-              ];
+              # When gcc and gfortran are upgraded to v13, we can remove it
+              makeFlags = (attrs.makeFlags or [ ]) ++ [ "CFLAGS=-fno-tree-vectorize" ];
             });
             forge = self.callPackage ./forge.nix { };
             arrayfire = self.callPackage ./arrayfire.nix { };
@@ -92,10 +93,18 @@
     {
       packages = {
         default = pkgs.arrayfire;
-        arrayfire = pkgs.arrayfire.override {
-          cudaPackages = pkgs.cudaPackages_11_4;
+        arrayfire = {
+          default = pkgs.arrayfire;
+          cuda = pkgs.arrayfire.override {
+            withCuda = true;
+            # cudaPackages = pkgs.cudaPackages_12_1;
+          };
+          opencl = pkgs.arrayfire.override {
+            withOpenCL = true;
+          };
         };
         forge = pkgs.forge;
+        openblas = pkgs.openblas;
         blas = pkgs.blas;
         lapack = pkgs.lapack;
       };
@@ -138,47 +147,47 @@
           neovim
         ];
         shellHook = ''
-          prepare_sources() {
-            mkdir -p ./extern/af_glad-src
-            mkdir -p ./extern/af_threads-src
-            mkdir -p ./extern/af_assets-src
-            mkdir -p ./extern/af_test_data-src
-            mkdir -p ./extern/ocl_clfft-src
-            mkdir -p ./extern/ocl_clblast-src
-            mkdir -p ./extern/nv_cub-src
-            cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
-            cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
-            cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
-            cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
-            cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
-            cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
-            cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
+                    prepare_sources() {
+                      mkdir -p ./extern/af_glad-src
+                      mkdir -p ./extern/af_threads-src
+                      mkdir -p ./extern/af_assets-src
+                      mkdir -p ./extern/af_test_data-src
+                      mkdir -p ./extern/ocl_clfft-src
+                      mkdir -p ./extern/ocl_clblast-src
+                      mkdir -p ./extern/nv_cub-src
+                      cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
+                      cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
+                      cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
+                      cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
+                      cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
+                      cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
+                      cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
 
-            substituteInPlace src/api/unified/symbol_manager.cpp \
-              --replace '"/opt/arrayfire-3/lib/",' \
-                        "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
+                      substituteInPlace src/api/unified/symbol_manager.cpp \
+                        --replace '"/opt/arrayfire-3/lib/",' \
+                                  "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
 
-            substituteInPlace CMakeLists.txt \
-              --replace ' QUIET ' ' ' \
-              --replace ' QUIET)' ')' \
-              --replace 'find_package(MKL)' '# find_package(MKL)' \
-              --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
-find_package(BLAS)'
-            substituteInPlace src/backend/cuda/CMakeLists.txt \
-              --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
-                        'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
-            substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
-              --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
-          }
+                      substituteInPlace CMakeLists.txt \
+                        --replace ' QUIET ' ' ' \
+                        --replace ' QUIET)' ')' \
+                        --replace 'find_package(MKL)' '# find_package(MKL)' \
+                        --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
+          find_package(BLAS)'
+                      substituteInPlace src/backend/cuda/CMakeLists.txt \
+                        --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
+                                  'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
+                      substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
+                        --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
+                    }
 
-          export AF_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAF_TEST_WITH_MTX_FILES=OFF -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_FORGE=OFF -DAF_BUILD_OPENCL=ON -DAF_BUILD_CUDA=OFF -DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS' -DAF_USE_RELATIVE_TEST_DIR=OFF -DCMAKE_CXX_FLAGS=-DSPDLOG_FMT_EXTERNAL=1"
-          export LD_LIBRARY_PATH=${pkgs.freeimage}/lib:${pkgs.cudaPackages_11_4.cudatoolkit}/lib64:$LD_LIBRARY_PATH
+                    export AF_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAF_TEST_WITH_MTX_FILES=OFF -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_FORGE=OFF -DAF_BUILD_OPENCL=ON -DAF_BUILD_CUDA=OFF -DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS' -DAF_USE_RELATIVE_TEST_DIR=OFF -DCMAKE_CXX_FLAGS=-DSPDLOG_FMT_EXTERNAL=1"
+                    export LD_LIBRARY_PATH=${pkgs.freeimage}/lib:${pkgs.cudaPackages_11_4.cudatoolkit}/lib64:$LD_LIBRARY_PATH
 
-          export MESA_PATH=${pkgs.mesa}
-          export MESA_DRIVERS_PATH=${pkgs.mesa.drivers}
-          export GLVD_PATH=${pkgs.libglvnd}
-          export CUDATOOLKIT=${pkgs.cudaPackages_11_4.cudatoolkit}
-          export NVRTC_PATH=${pkgs.cudaPackages_11_4.cuda_nvrtc}
+                    export MESA_PATH=${pkgs.mesa}
+                    export MESA_DRIVERS_PATH=${pkgs.mesa.drivers}
+                    export GLVD_PATH=${pkgs.libglvnd}
+                    export CUDATOOLKIT=${pkgs.cudaPackages_11_4.cudatoolkit}
+                    export NVRTC_PATH=${pkgs.cudaPackages_11_4.cuda_nvrtc}
         '';
       };
       formatter = pkgs.nixpkgs-fmt;

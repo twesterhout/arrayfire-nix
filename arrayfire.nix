@@ -27,7 +27,7 @@
 , spdlog
 , stdenv
 , withOpenCL ? false
-, withCuda ? true
+, withCuda ? false
 }:
 
 assert blas.isILP64 == false;
@@ -99,42 +99,42 @@ stdenv.mkDerivation rec {
   ];
 
   postPatch = ''
-    mkdir -p ./extern/af_glad-src
-    mkdir -p ./extern/af_threads-src
-    mkdir -p ./extern/af_assets-src
-    mkdir -p ./extern/af_test_data-src
-    mkdir -p ./extern/ocl_clfft-src
-    mkdir -p ./extern/ocl_clblast-src
-    mkdir -p ./extern/nv_cub-src
-    cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
-    cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
-    cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
-    cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
-    cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
-    cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
-    cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
+        mkdir -p ./extern/af_glad-src
+        mkdir -p ./extern/af_threads-src
+        mkdir -p ./extern/af_assets-src
+        mkdir -p ./extern/af_test_data-src
+        mkdir -p ./extern/ocl_clfft-src
+        mkdir -p ./extern/ocl_clblast-src
+        mkdir -p ./extern/nv_cub-src
+        cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
+        cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
+        cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
+        cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
+        cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
+        cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
+        cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
 
-    substituteInPlace src/api/unified/symbol_manager.cpp \
-      --replace '"/opt/arrayfire-3/lib/",' \
-                "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
+        substituteInPlace src/api/unified/symbol_manager.cpp \
+          --replace '"/opt/arrayfire-3/lib/",' \
+                    "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
 
-    substituteInPlace CMakeLists.txt \
-      --replace ' QUIET ' ' ' \
-      --replace ' QUIET)' ')' \
-      --replace 'find_package(MKL)' '# find_package(MKL)' \
-      --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
-find_package(BLAS)'
-    substituteInPlace src/backend/cuda/CMakeLists.txt \
-      --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
-                'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
-    substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
-      --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
+        substituteInPlace CMakeLists.txt \
+          --replace ' QUIET ' ' ' \
+          --replace ' QUIET)' ')' \
+          --replace 'find_package(MKL)' '# find_package(MKL)' \
+          --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
+    find_package(BLAS)'
+        substituteInPlace src/backend/cuda/CMakeLists.txt \
+          --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
+                    'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
+        substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
+          --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
   '';
 
   doCheck = true;
   checkPhase =
     let
-      LD_LIBRARY_PATH = concatStringSep ":" (
+      LD_LIBRARY_PATH = builtins.concatStringsSep ":" (
         [
           "${forge}/lib"
           "${freeimage}/lib"

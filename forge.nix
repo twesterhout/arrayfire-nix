@@ -1,19 +1,20 @@
-{ lib
-, stdenv
-, fetchFromGitHub
+{ boost
 , cmake
-, pkg-config
 , expat
+, fetchFromGitHub
 , fontconfig
 , freeimage
 , freetype
 , git
-, boost
-, mesa
-, libGLU
-, libGL
 , glfw3
 , glm
+, lib
+, libGLU
+, libGL
+, mesa
+, opencl-clhpp
+, pkg-config
+, stdenv
 , SDL2
 }:
 
@@ -37,6 +38,8 @@ stdenv.mkDerivation rec {
   postPatch = ''
     mkdir -p ./extern/fg_glad-src
     cp -R --no-preserve=mode,ownership ${glad}/* ./extern/fg_glad-src/
+    ln -s ${opencl-clhpp} ./extern/cl2hpp
+
     substituteInPlace CMakeModules/ForgeConfigureDepsVars.cmake \
       --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
   '';
@@ -61,6 +64,7 @@ stdenv.mkDerivation rec {
     libGL
     libGLU
     mesa
+    opencl-clhpp
     SDL2
   ];
 
