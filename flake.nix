@@ -43,6 +43,7 @@
           inputs.nixgl.overlay
         ];
         config.allowUnfree = true;
+        config.cudaSupport = true;
       };
       inherit (pkgs) fetchFromGitHub;
 
@@ -93,15 +94,13 @@
     {
       packages = {
         default = pkgs.arrayfire;
-        arrayfire = {
-          default = pkgs.arrayfire;
-          cuda = pkgs.arrayfire.override {
-            withCuda = true;
-            # cudaPackages = pkgs.cudaPackages_12_1;
-          };
-          opencl = pkgs.arrayfire.override {
-            withOpenCL = true;
-          };
+        arrayfire = pkgs.arrayfire;
+        arrayfire-cuda = pkgs.arrayfire.override {
+          withCuda = true;
+          cudaPackages = pkgs.cudaPackages_12_0;
+        };
+        arrayfire-opencl = pkgs.arrayfire.override {
+          withOpenCL = true;
         };
         forge = pkgs.forge;
         openblas = pkgs.openblas;
