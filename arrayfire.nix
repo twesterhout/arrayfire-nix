@@ -2,7 +2,6 @@
 , boost
 , cmake
 , cudaPackages
-, doxygen
 , clinfo
 , strace
 , fetchFromGitHub
@@ -16,19 +15,14 @@
 , lapack
 , lib
 , libGL
-, libGLU
-, libglvnd
 , mesa
-, nixgl
 , ocl-icd
-, openblas
 , opencl-clhpp
 , pkg-config
 , python3
 , span-lite
-, spdlog
 , stdenv
-, doCheck ? true
+, doCheck ? false
 , withCPU ? true
 , withCuda ? false
 , withOpenCL ? false
@@ -39,15 +33,13 @@ assert blas.isILP64 == false;
 
 stdenv.mkDerivation rec {
   pname = "arrayfire";
-  version = "3.8.3";
+  version = "3.8.4-pre";
 
   src = fetchFromGitHub {
     owner = pname;
     repo = pname;
     rev = "d2a66367d859cdb554f2374e29d39c88d5fff978";
-    # v${version}";
     hash = "sha256-9r1w0U9MvhduHwBpEWpqkrQPawd94EY3FAqSJghi09I=";
-    # sha256 = "sha256-Chk7koBv66JsfKV6+y6wg21snXYZswo6hjYm8rYEbbs=";
   };
 
   assets = fetchFromGitHub {
@@ -104,15 +96,12 @@ stdenv.mkDerivation rec {
     "-DAF_BUILD_EXAMPLES=OFF"
     "-DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS'"
     "-DAF_TEST_WITH_MTX_FILES=OFF"
-    # "-DAF_USE_RELATIVE_TEST_DIR=OFF"
     "-DAF_BUILD_FORGE=OFF"
-    # "-DAF_BUILD_UNIFIED=OFF"
     (if withCPU then "-DAF_BUILD_CPU=ON" else "-DAF_BUILD_CPU=OFF")
     (if withOpenCL then "-DAF_BUILD_OPENCL=ON" else "-DAF_BUILD_OPENCL=OFF")
     (if withCuda then "-DAF_BUILD_CUDA=ON" else "-DAF_BUILD_CUDA=OFF")
   ] ++ lib.optionals withCuda [
-    "-DCUDA_LIBRARIES_PATH=${cudaPackages.cudatoolkit}/lib"  
-    # "-DCMAKE_LIBRARY_PATH=${cudaPackages.cudatoolkit}/lib/stubs"  
+    "-DCUDA_LIBRARIES_PATH=${cudaPackages.cudatoolkit}/lib"
   ];
 
   postPatch = ''
@@ -136,21 +125,6 @@ stdenv.mkDerivation rec {
     substituteInPlace src/api/unified/symbol_manager.cpp \
       --replace '"/opt/arrayfire-3/lib/",' \
                 "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
-
-    # substituteInPlace CMakeLists.txt \
-    #   --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
-    #   find_package(BLAS)'
-
-    # substituteInPlace src/backend/cuda/CMakeLists.txt \
-    #   --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
-    #             'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
-    # substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
-    #   --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
-
-    # export LD_LIBRARY_PATH=${nvidiaComputeDrivers}/lib:$LD_LIBRARY_PATH
-    # ls /dev
-    # OCL_ICD_VENDORS=${nvidiaComputeDrivers}/etc/OpenCL/vendors clinfo
-    # exit 1
   '';
 
   inherit doCheck;
@@ -160,9 +134,10 @@ stdenv.mkDerivation rec {
         [ "${forge}/lib" "${freeimage}/lib" ]
         ++ lib.optional withCuda "${cudaPackages.cudatoolkit}/lib64"
         ++ lib.optional (nvidiaComputeDrivers != null) "${nvidiaComputeDrivers}/lib"
-        );
+      );
       ctestFlags = builtins.concatStringsSep " " (
         [ "--output-on-errors" "-j1" ]
+        # See https://github.com/arrayfire/arrayfire/issues/3484
         ++ lib.optional withOpenCL "-E '(inverse_dense|cholesky_dense)'"
       );
     in
@@ -203,12 +178,10 @@ stdenv.mkDerivation rec {
     cmake
     clinfo
     strace
-    # doxygen
     git
     pkg-config
     python3
   ];
-  # ++ lib.optional withCuda nixgl.auto.nixGLDefault;
 
   meta = with lib; {
     description = "A general-purpose library for parallel and massively-parallel computations";

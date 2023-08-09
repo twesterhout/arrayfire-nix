@@ -16,221 +16,435 @@
     };
   };
 
-  outputs = inputs: inputs.flake-utils.lib.eachDefaultSystem (system:
+  outputs = inputs:
     let
-      pkgs = import inputs.nixpkgs {
+      overlayBuilder = { cudaArch ? null, cudaVersion ? null, cudaHash ? null }: final: prev: rec {
+        # We need a newer OpenBLAS for this to be fixed:
+        # https://github.com/xianyi/OpenBLAS/issues/4013
+        openblas = prev.openblas.overrideAttrs (attrs: rec {
+          version = "0.3.24";
+          name = "${attrs.pname}-${version}";
+          src = prev.fetchFromGitHub {
+            owner = "xianyi";
+            repo = "OpenBLAS";
+            rev = "88c205c9582b98c7d5a89ac9952bf36a019e5966";
+            sha256 = "sha256-+OuMV7+RBwghJrWsGCk5cu3Yzawkrmu0yvPE0uPP7rU=";
+          };
+          # When gcc and gfortran are upgraded to v13, we can remove it
+          makeFlags = (attrs.makeFlags or [ ]) ++ [ "CFLAGS=-fno-tree-vectorize" ];
+        });
+
+        # A package with Nvidia drivers for CUDA and OpenCL. Very similar to
+        # nvidia_x11, but we don't skip libraries the graphics library to have
+        # a smaller package.
+        nvidiaComputeDrivers =
+          if cudaVersion == null
+          then null
+          else
+            (prev.linuxPackages.nvidia_x11.override {
+              libsOnly = true;
+              kernel = null;
+              firmware = null;
+            }).overrideAttrs
+              (oldAttrs: {
+                pname = "nvidia-compute-drivers";
+                name = "nvidia-compute-drivers-${cudaArch}-${cudaVersion}";
+                version = cudaVersion;
+                src =
+                  let
+                    url = "https://us.download.nvidia.com/${cudaArch}/${cudaVersion}/NVIDIA-Linux-x86_64-${cudaVersion}.run";
+                    # "sha256-zsN/2TFwkaAf0DgDCUAKFChHaXkGUf4CHh1aqiMno3A=";
+                  in
+                  if cudaHash != null
+                  then prev.fetchurl { inherit url; hash = cudaHash; }
+                  else builtins.fetchurl url;
+                useGLVND = false;
+                useProfiles = false;
+                postFixup = ''
+                  # rm $out/lib/libEGL*
+                  # rm $out/lib/libGL*
+                  # rm $out/lib/libOpenGL*
+                  # rm $out/lib/libglx*
+                  # rm $out/lib/libnvcuvid*
+                '';
+              });
+
+        forge = final.callPackage ./forge.nix { };
+        arrayfire = final.callPackage ./arrayfire.nix {
+          cudaPackages = final.cudaPackages_12;
+          inherit nvidiaComputeDrivers;
+        };
+      };
+
+      tesla_535_86_10 = overlayBuilder {
+        cudaArch = "tesla";
+        cudaVersion = "535.86.10";
+        cudaHash = "sha256-zsN/2TFwkaAf0DgDCUAKFChHaXkGUf4CHh1aqiMno3A=";
+      };
+
+      pkgsFor = system: overlays: import inputs.nixpkgs {
         inherit system;
-        overlays = [
-          (self: super: {
-            # We need a newer OpenBLAS for this to be fixed:
-            # https://github.com/xianyi/OpenBLAS/issues/4013
-            openblas = super.openblas.overrideAttrs (attrs: rec {
-              version = "0.3.24";
-              name = "${attrs.pname}-${version}";
-              src = super.fetchFromGitHub {
-                owner = "xianyi";
-                repo = "OpenBLAS";
-                rev = "88c205c9582b98c7d5a89ac9952bf36a019e5966";
-                sha256 = "sha256-+OuMV7+RBwghJrWsGCk5cu3Yzawkrmu0yvPE0uPP7rU=";
-              };
-              # When gcc and gfortran are upgraded to v13, we can remove it
-              makeFlags = (attrs.makeFlags or [ ]) ++ [ "CFLAGS=-fno-tree-vectorize" ];
-            });
-            nvidiaComputeDrivers =
-              let
-                arch = "tesla";
-                version = "535.86.10";
-              in
-              (super.linuxPackages.nvidia_x11.override {
-                libsOnly = true;
-                kernel = null;
-                firmware = null;
-              }).overrideAttrs
-                (oldAttrs: rec {
-                  pname = "nvidia";
-                  name = "nvidia-x11-${arch}-${version}-nixGL";
-                  inherit version;
-                  src = pkgs.fetchurl {
-                    url = "https://us.download.nvidia.com/${arch}/${version}/NVIDIA-Linux-x86_64-${version}.run";
-                    hash = "sha256-zsN/2TFwkaAf0DgDCUAKFChHaXkGUf4CHh1aqiMno3A=";
-                  };
-                  useGLVND = false;
-                  useProfiles = false;
-                  postFixup = ''
-                    # rm $out/lib/libEGL*
-                    # rm $out/lib/libGL*
-                    # rm $out/lib/libOpenGL*
-                    # rm $out/lib/libglx*
-                    # rm $out/lib/libnvcuvid*
-                  '';
-                });
-            forge = self.callPackage ./forge.nix { };
-            arrayfire = self.callPackage ./arrayfire.nix { };
-          })
-          inputs.nixgl.overlay
-        ];
+        overlays = [ tesla_535_86_10 ];
         config.allowUnfree = true;
         config.cudaSupport = true;
       };
-      inherit (pkgs) fetchFromGitHub;
-
-      assets = fetchFromGitHub {
-        owner = "arrayfire";
-        repo = "assets";
-        rev = "cd08d749611b324012555ad6f23fd76c5465bd6c";
-        sha256 = "sha256-v4uhqPz1P1g1430FTmMp22xJS50bb5hZTeEX49GgMWg=";
-      };
-      clblast = fetchFromGitHub {
-        owner = "cnugteren";
-        repo = "CLBlast";
-        rev = "4500a03440e2cc54998c0edab366babf5e504d67";
-        sha256 = "sha256-I25ylQp6kHZx6Q7Ph5r3abWlQ6yeIHIDdS1eGCyArZ0=";
-      };
-      clfft = fetchFromGitHub {
-        owner = "arrayfire";
-        repo = "clfft";
-        rev = "760096b37dcc4f18ccd1aac53f3501a83b83449c";
-        sha256 = "sha256-vJo1YfC2AJIbbRj/zTfcOUmi0Oj9v64NfA9MfK8ecoY=";
-      };
-      glad = fetchFromGitHub {
-        owner = "arrayfire";
-        repo = "glad";
-        rev = "ef8c5508e72456b714820c98e034d9a55b970650";
-        sha256 = "sha256-u9Vec7XLhE3xW9vzM7uuf+b18wZsh/VMtGbB6nMVlno=";
-      };
-      threads = fetchFromGitHub {
-        owner = "arrayfire";
-        repo = "threads";
-        rev = "4d4a4f0384d1ac2f25b2c4fc1d57b9e25f4d6818";
-        sha256 = "sha256-qqsT9woJDtQvzuV323OYXm68pExygYs/+zZNmg2sN34=";
-      };
-      test-data = fetchFromGitHub {
-        owner = "arrayfire";
-        repo = "arrayfire-data";
-        rev = "a5f533d7b864a4d8f0dd7c9aaad5ff06018c4867";
-        sha256 = "sha256-AWzhsrDXyZrQN2bd0Ng/XlE8v02x7QWTiFTyaAuRXSw=";
-      };
-      cub = fetchFromGitHub {
-        owner = "NVIDIA";
-        repo = "cub";
-        rev = "1.10.0";
-        sha256 = "sha256-JyyNaTrtoSGiMP7tVUu9lFL07lyfJzRTVtx8yGy6/BI=";
-      };
-      spdlog = fetchFromGitHub {
-        owner = "gabime";
-        repo = "spdlog";
-        rev = "v1.9.2";
-        hash = "sha256-GSUdHtvV/97RyDKy8i+ticnSlQCubGGWHg4Oo+YAr8Y=";
-      };
-
     in
     {
-      packages = {
-        default = pkgs.arrayfire;
-        drivers = pkgs.nvidiaComputeDrivers;
-        arrayfire = pkgs.arrayfire;
-        arrayfire-cuda = pkgs.arrayfire.override {
-          withCuda = true;
-          cudaPackages = pkgs.cudaPackages_12;
-          inherit (pkgs) nvidiaComputeDrivers;
-        };
-        arrayfire-opencl = pkgs.arrayfire.override {
-          withOpenCL = true;
-          inherit (pkgs) nvidiaComputeDrivers;
-        };
-        forge = pkgs.forge;
-        openblas = pkgs.openblas;
-        blas = pkgs.blas;
-        lapack = pkgs.lapack;
+      packages = inputs.flake-utils.lib.eachDefaultSystemMap (system:
+        let
+          pkgsV100 = pkgsFor system [ tesla_535_86_10 ];
+          pkgs = pkgsFor system [ ];
+        in
+        {
+          default = inputs.self.packages.${system}.arrayfire;
+          arrayfire = inputs.self.packages.${system}.arrayfire-opencl;
+          arrayfire-cpu = pkgs.arrayfire;
+          arrayfire-opencl = pkgs.arrayfire.override { withOpenCL = true; };
+          arrayfire-cuda = pkgs.arrayfire.override { withOpenCL = true; withCuda = true; };
+          V100 = {
+            arrayfire-cpu = pkgsV100.arrayfire.override { withCPU = true; withOpenCL = false; doCheck = true; };
+            arrayfire-opencl = pkgsV100.arrayfire.override { withCPU = true; withOpenCL = true; doCheck = true; };
+            arrayfire-cuda = pkgsV100.arrayfire.override { withCPU = true; withOpenCL = true; withCuda = true; doCheck = true; };
+          };
+        });
+
+      devShells = inputs.flake-utils.lib.eachDefaultSystemMap (system:
+        let
+          pkgs = pkgsFor system;
+          inherit (pkgs) fetchFromGitHub;
+          assets = fetchFromGitHub {
+            owner = "arrayfire";
+            repo = "assets";
+            rev = "cd08d749611b324012555ad6f23fd76c5465bd6c";
+            sha256 = "sha256-v4uhqPz1P1g1430FTmMp22xJS50bb5hZTeEX49GgMWg=";
+          };
+          clblast = fetchFromGitHub {
+            owner = "cnugteren";
+            repo = "CLBlast";
+            rev = "4500a03440e2cc54998c0edab366babf5e504d67";
+            sha256 = "sha256-I25ylQp6kHZx6Q7Ph5r3abWlQ6yeIHIDdS1eGCyArZ0=";
+          };
+          clfft = fetchFromGitHub {
+            owner = "arrayfire";
+            repo = "clfft";
+            rev = "760096b37dcc4f18ccd1aac53f3501a83b83449c";
+            sha256 = "sha256-vJo1YfC2AJIbbRj/zTfcOUmi0Oj9v64NfA9MfK8ecoY=";
+          };
+          glad = fetchFromGitHub {
+            owner = "arrayfire";
+            repo = "glad";
+            rev = "ef8c5508e72456b714820c98e034d9a55b970650";
+            sha256 = "sha256-u9Vec7XLhE3xW9vzM7uuf+b18wZsh/VMtGbB6nMVlno=";
+          };
+          threads = fetchFromGitHub {
+            owner = "arrayfire";
+            repo = "threads";
+            rev = "4d4a4f0384d1ac2f25b2c4fc1d57b9e25f4d6818";
+            sha256 = "sha256-qqsT9woJDtQvzuV323OYXm68pExygYs/+zZNmg2sN34=";
+          };
+          test-data = fetchFromGitHub {
+            owner = "arrayfire";
+            repo = "arrayfire-data";
+            rev = "a5f533d7b864a4d8f0dd7c9aaad5ff06018c4867";
+            sha256 = "sha256-AWzhsrDXyZrQN2bd0Ng/XlE8v02x7QWTiFTyaAuRXSw=";
+          };
+          cub = fetchFromGitHub {
+            owner = "NVIDIA";
+            repo = "cub";
+            rev = "1.10.0";
+            sha256 = "sha256-JyyNaTrtoSGiMP7tVUu9lFL07lyfJzRTVtx8yGy6/BI=";
+          };
+          spdlog = fetchFromGitHub {
+            owner = "gabime";
+            repo = "spdlog";
+            rev = "v1.9.2";
+            hash = "sha256-GSUdHtvV/97RyDKy8i+ticnSlQCubGGWHg4Oo+YAr8Y=";
+          };
+        in
+        {
+          default = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              blas
+              lapack
+              boost.out
+              boost.dev
+              fftw
+              fftwFloat
+              forge
+              freeimage
+              freetype
+              gtest
+              glfw3
+              glm
+              libGL
+              mesa
+              ocl-icd
+              opencl-clhpp
+              span-lite
+              fmt_9
+              # cudaPackages_12.cudatoolkit
+              # cudaPackages_12.cudnn
+            ];
+            nativeBuildInputs = with pkgs; [
+              cmake
+              pkg-config
+              python3
+              git
+              clinfo
+              nixpkgs-fmt
+            ];
+            shellHook = ''
+              prepare_sources() {
+                mkdir -p ./extern/af_glad-src
+                mkdir -p ./extern/af_threads-src
+                mkdir -p ./extern/af_assets-src
+                mkdir -p ./extern/af_test_data-src
+                mkdir -p ./extern/ocl_clfft-src
+                mkdir -p ./extern/ocl_clblast-src
+                mkdir -p ./extern/nv_cub-src
+                mkdir -p ./extern/spdlog-src
+                cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
+                cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
+                cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
+                cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
+                cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
+                cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
+                cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
+                cp -R --no-preserve=mode,ownership ${spdlog}/* ./extern/spdlog-src/
+
+                substituteInPlace CMakeLists.txt \
+                  --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
+                  find_package(BLAS)'
+              }
+
+              # export OCL_ICD_VENDORS=${pkgs.nvidiaComputeDrivers}/etc/OpenCL/vendors
+              # export LD_LIBRARY_PATH=${pkgs.nvidiaComputeDrivers}/lib:${pkgs.freeimage}/lib:${pkgs.forge}/lib:$LD_LIBRARY_PATH
+            '';
+          };
+        });
+
+      inherit overlayBuilder;
+      overlays = {
+        default = overlayBuilder { cudaArch = null; cudaVersion = null; cudaHash = null; };
+
+        inherit tesla_535_86_10;
       };
-      devShells.default = pkgs.mkShell {
-        buildInputs = with pkgs; [
-          blas
-          lapack
-          boost.out
-          boost.dev
-          fftw
-          fftwFloat
-          forge
-          freeimage
-          freetype
-          gtest
-          glfw3
-          glm
-          libGL
-          mesa
-          ocl-icd
-          opencl-clhpp
-          span-lite
-          fmt_9
-          # spdlog.out
-          # spdlog.dev
-          # cudaPackages_12.cudatoolkit # _11_4.cudatoolkit
-          # cudaPackages_12.cudnn # _11_4.cudnn
-        ];
-        nativeBuildInputs = with pkgs; [
-          cmake
-          pkg-config
-          python3
-          gdb
-          valgrind
-          git
-          clinfo
-          # nixgl.auto.nixGLDefault
-          nixpkgs-fmt
-          # neovim
-        ];
-        shellHook = ''
-          prepare_sources() {
-            mkdir -p ./extern/af_glad-src
-            mkdir -p ./extern/af_threads-src
-            mkdir -p ./extern/af_assets-src
-            mkdir -p ./extern/af_test_data-src
-            mkdir -p ./extern/ocl_clfft-src
-            mkdir -p ./extern/ocl_clblast-src
-            mkdir -p ./extern/nv_cub-src
-            mkdir -p ./extern/spdlog-src
-            cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
-            cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
-            cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
-            cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
-            cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
-            cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
-            cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
-            cp -R --no-preserve=mode,ownership ${spdlog}/* ./extern/spdlog-src/
+    };
+  # outputs = inputs: inputs.flake-utils.lib.eachDefaultSystem (system:
+  #   let
+  #     pkgs = import inputs.nixpkgs {
+  #       inherit system;
+  #       overlays = [
+  #         (self: super: {
+  #           # We need a newer OpenBLAS for this to be fixed:
+  #           # https://github.com/xianyi/OpenBLAS/issues/4013
+  #           openblas = super.openblas.overrideAttrs (attrs: rec {
+  #             version = "0.3.24";
+  #             name = "${attrs.pname}-${version}";
+  #             src = super.fetchFromGitHub {
+  #               owner = "xianyi";
+  #               repo = "OpenBLAS";
+  #               rev = "88c205c9582b98c7d5a89ac9952bf36a019e5966";
+  #               sha256 = "sha256-+OuMV7+RBwghJrWsGCk5cu3Yzawkrmu0yvPE0uPP7rU=";
+  #             };
+  #             # When gcc and gfortran are upgraded to v13, we can remove it
+  #             makeFlags = (attrs.makeFlags or [ ]) ++ [ "CFLAGS=-fno-tree-vectorize" ];
+  #           });
+  #           nvidiaComputeDrivers =
+  #             let
+  #               arch = "tesla";
+  #               version = "535.86.10";
+  #             in
+  #             (super.linuxPackages.nvidia_x11.override {
+  #               libsOnly = true;
+  #               kernel = null;
+  #               firmware = null;
+  #             }).overrideAttrs
+  #               (oldAttrs: rec {
+  #                 pname = "nvidia";
+  #                 name = "nvidia-x11-${arch}-${version}-nixGL";
+  #                 inherit version;
+  #                 src = pkgs.fetchurl {
+  #                   url = "https://us.download.nvidia.com/${arch}/${version}/NVIDIA-Linux-x86_64-${version}.run";
+  #                   hash = "sha256-zsN/2TFwkaAf0DgDCUAKFChHaXkGUf4CHh1aqiMno3A=";
+  #                 };
+  #                 useGLVND = false;
+  #                 useProfiles = false;
+  #                 postFixup = ''
+  #                   # rm $out/lib/libEGL*
+  #                   # rm $out/lib/libGL*
+  #                   # rm $out/lib/libOpenGL*
+  #                   # rm $out/lib/libglx*
+  #                   # rm $out/lib/libnvcuvid*
+  #                 '';
+  #               });
+  #           forge = self.callPackage ./forge.nix { };
+  #           arrayfire = self.callPackage ./arrayfire.nix { };
+  #         })
+  #         inputs.nixgl.overlay
+  #       ];
+  #       config.allowUnfree = true;
+  #       config.cudaSupport = true;
+  #     };
+  #     inherit (pkgs) fetchFromGitHub;
 
-            # substituteInPlace src/api/unified/symbol_manager.cpp \
-            #   --replace '"/opt/arrayfire-3/lib/",' \
-            #             "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
+  #     assets = fetchFromGitHub {
+  #       owner = "arrayfire";
+  #       repo = "assets";
+  #       rev = "cd08d749611b324012555ad6f23fd76c5465bd6c";
+  #       sha256 = "sha256-v4uhqPz1P1g1430FTmMp22xJS50bb5hZTeEX49GgMWg=";
+  #     };
+  #     clblast = fetchFromGitHub {
+  #       owner = "cnugteren";
+  #       repo = "CLBlast";
+  #       rev = "4500a03440e2cc54998c0edab366babf5e504d67";
+  #       sha256 = "sha256-I25ylQp6kHZx6Q7Ph5r3abWlQ6yeIHIDdS1eGCyArZ0=";
+  #     };
+  #     clfft = fetchFromGitHub {
+  #       owner = "arrayfire";
+  #       repo = "clfft";
+  #       rev = "760096b37dcc4f18ccd1aac53f3501a83b83449c";
+  #       sha256 = "sha256-vJo1YfC2AJIbbRj/zTfcOUmi0Oj9v64NfA9MfK8ecoY=";
+  #     };
+  #     glad = fetchFromGitHub {
+  #       owner = "arrayfire";
+  #       repo = "glad";
+  #       rev = "ef8c5508e72456b714820c98e034d9a55b970650";
+  #       sha256 = "sha256-u9Vec7XLhE3xW9vzM7uuf+b18wZsh/VMtGbB6nMVlno=";
+  #     };
+  #     threads = fetchFromGitHub {
+  #       owner = "arrayfire";
+  #       repo = "threads";
+  #       rev = "4d4a4f0384d1ac2f25b2c4fc1d57b9e25f4d6818";
+  #       sha256 = "sha256-qqsT9woJDtQvzuV323OYXm68pExygYs/+zZNmg2sN34=";
+  #     };
+  #     test-data = fetchFromGitHub {
+  #       owner = "arrayfire";
+  #       repo = "arrayfire-data";
+  #       rev = "a5f533d7b864a4d8f0dd7c9aaad5ff06018c4867";
+  #       sha256 = "sha256-AWzhsrDXyZrQN2bd0Ng/XlE8v02x7QWTiFTyaAuRXSw=";
+  #     };
+  #     cub = fetchFromGitHub {
+  #       owner = "NVIDIA";
+  #       repo = "cub";
+  #       rev = "1.10.0";
+  #       sha256 = "sha256-JyyNaTrtoSGiMP7tVUu9lFL07lyfJzRTVtx8yGy6/BI=";
+  #     };
+  #     spdlog = fetchFromGitHub {
+  #       owner = "gabime";
+  #       repo = "spdlog";
+  #       rev = "v1.9.2";
+  #       hash = "sha256-GSUdHtvV/97RyDKy8i+ticnSlQCubGGWHg4Oo+YAr8Y=";
+  #     };
 
-            # substituteInPlace CMakeLists.txt \
-            #   --replace ' QUIET ' ' ' \
-            #   --replace ' QUIET)' ')' \
-            #   --replace 'find_package(MKL)' '# find_package(MKL)' \
-            substituteInPlace CMakeLists.txt \
-              --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
-              find_package(BLAS)'
-            # substituteInPlace src/backend/cuda/CMakeLists.txt \
-            #   --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
-            #             'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
-            # substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
-            #   --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
-          }
+  #   in
+  #   {
+  #     packages = {
+  #       default = pkgs.arrayfire;
+  #       drivers = pkgs.nvidiaComputeDrivers;
+  #       arrayfire = pkgs.arrayfire;
+  #       arrayfire-cuda = pkgs.arrayfire.override {
+  #         withCuda = true;
+  #         cudaPackages = pkgs.cudaPackages_12;
+  #         inherit (pkgs) nvidiaComputeDrivers;
+  #       };
+  #       arrayfire-opencl = pkgs.arrayfire.override {
+  #         withOpenCL = true;
+  #         inherit (pkgs) nvidiaComputeDrivers;
+  #       };
+  #       forge = pkgs.forge;
+  #       openblas = pkgs.openblas;
+  #       blas = pkgs.blas;
+  #       lapack = pkgs.lapack;
+  #     };
+  #     devShells.default = pkgs.mkShell {
+  #       buildInputs = with pkgs; [
+  #         blas
+  #         lapack
+  #         boost.out
+  #         boost.dev
+  #         fftw
+  #         fftwFloat
+  #         forge
+  #         freeimage
+  #         freetype
+  #         gtest
+  #         glfw3
+  #         glm
+  #         libGL
+  #         mesa
+  #         ocl-icd
+  #         opencl-clhpp
+  #         span-lite
+  #         fmt_9
+  #         # spdlog.out
+  #         # spdlog.dev
+  #         # cudaPackages_12.cudatoolkit # _11_4.cudatoolkit
+  #         # cudaPackages_12.cudnn # _11_4.cudnn
+  #       ];
+  #       nativeBuildInputs = with pkgs; [
+  #         cmake
+  #         pkg-config
+  #         python3
+  #         gdb
+  #         valgrind
+  #         git
+  #         clinfo
+  #         # nixgl.auto.nixGLDefault
+  #         nixpkgs-fmt
+  #         # neovim
+  #       ];
+  #       shellHook = ''
+  #         prepare_sources() {
+  #           mkdir -p ./extern/af_glad-src
+  #           mkdir -p ./extern/af_threads-src
+  #           mkdir -p ./extern/af_assets-src
+  #           mkdir -p ./extern/af_test_data-src
+  #           mkdir -p ./extern/ocl_clfft-src
+  #           mkdir -p ./extern/ocl_clblast-src
+  #           mkdir -p ./extern/nv_cub-src
+  #           mkdir -p ./extern/spdlog-src
+  #           cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
+  #           cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
+  #           cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
+  #           cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
+  #           cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
+  #           cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
+  #           cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
+  #           cp -R --no-preserve=mode,ownership ${spdlog}/* ./extern/spdlog-src/
 
-          # export AF_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAF_TEST_WITH_MTX_FILES=OFF -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_FORGE=OFF -DAF_BUILD_OPENCL=ON -DAF_BUILD_CUDA=OFF -DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS' -DAF_USE_RELATIVE_TEST_DIR=OFF"
-          # export LD_LIBRARY_PATH=$LD_LIBRARY_PATH
-          export OCL_ICD_VENDORS=${pkgs.nvidiaComputeDrivers}/etc/OpenCL/vendors
-          export LD_LIBRARY_PATH=${pkgs.nvidiaComputeDrivers}/lib:${pkgs.freeimage}/lib:${pkgs.forge}/lib:$LD_LIBRARY_PATH
+  #           # substituteInPlace src/api/unified/symbol_manager.cpp \
+  #           #   --replace '"/opt/arrayfire-3/lib/",' \
+  #           #             "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
 
-          export MESA_PATH=${pkgs.mesa}
-          export MESA_DRIVERS_PATH=${pkgs.mesa.drivers}
-          export GLVD_PATH=${pkgs.libglvnd}
-          export BOOST_PATH=${pkgs.boost.out}
-          export BOOST_DEV_PATH=${pkgs.boost.dev}
-          export DRIVERS=${pkgs.nvidiaComputeDrivers}
-        '';
-      };
-      formatter = pkgs.nixpkgs-fmt;
-    }
-  );
+  #           # substituteInPlace CMakeLists.txt \
+  #           #   --replace ' QUIET ' ' ' \
+  #           #   --replace ' QUIET)' ')' \
+  #           #   --replace 'find_package(MKL)' '# find_package(MKL)' \
+  #           substituteInPlace CMakeLists.txt \
+  #             --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
+  #             find_package(BLAS)'
+  #           # substituteInPlace src/backend/cuda/CMakeLists.txt \
+  #           #   --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
+  #           #             'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
+  #           # substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
+  #           #   --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
+  #         }
+
+  #         # export AF_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAF_TEST_WITH_MTX_FILES=OFF -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_FORGE=OFF -DAF_BUILD_OPENCL=ON -DAF_BUILD_CUDA=OFF -DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS' -DAF_USE_RELATIVE_TEST_DIR=OFF"
+  #         # export LD_LIBRARY_PATH=$LD_LIBRARY_PATH
+  #         export OCL_ICD_VENDORS=${pkgs.nvidiaComputeDrivers}/etc/OpenCL/vendors
+  #         export LD_LIBRARY_PATH=${pkgs.nvidiaComputeDrivers}/lib:${pkgs.freeimage}/lib:${pkgs.forge}/lib:$LD_LIBRARY_PATH
+
+  #         export MESA_PATH=${pkgs.mesa}
+  #         export MESA_DRIVERS_PATH=${pkgs.mesa.drivers}
+  #         export GLVD_PATH=${pkgs.libglvnd}
+  #         export BOOST_PATH=${pkgs.boost.out}
+  #         export BOOST_DEV_PATH=${pkgs.boost.dev}
+  #         export DRIVERS=${pkgs.nvidiaComputeDrivers}
+  #       '';
+  #     };
+  #     formatter = pkgs.nixpkgs-fmt;
+  #   }
+  # );
 }
