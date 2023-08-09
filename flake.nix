@@ -2,7 +2,6 @@
   description = "Nix flake for ArrayFire";
 
   nixConfig = {
-    extra-experimental-features = "nix-command flakes";
     extra-substituters = "https://halide-haskell.cachix.org";
     extra-trusted-public-keys = "halide-haskell.cachix.org-1:cFPqtShCsH4aNjn2q4PHb39Omtd/FWRhrkTBcSrtNKQ=";
   };
@@ -37,6 +36,34 @@
               # When gcc and gfortran are upgraded to v13, we can remove it
               makeFlags = (attrs.makeFlags or [ ]) ++ [ "CFLAGS=-fno-tree-vectorize" ];
             });
+            nvidiaComputeDrivers =
+              let
+                arch = "tesla";
+                version = "535.86.10";
+              in
+              (super.linuxPackages.nvidia_x11.override {
+                libsOnly = true;
+                kernel = null;
+                firmware = null;
+              }).overrideAttrs
+                (oldAttrs: rec {
+                  pname = "nvidia";
+                  name = "nvidia-x11-${arch}-${version}-nixGL";
+                  inherit version;
+                  src = pkgs.fetchurl {
+                    url = "https://us.download.nvidia.com/${arch}/${version}/NVIDIA-Linux-x86_64-${version}.run";
+                    hash = "sha256-zsN/2TFwkaAf0DgDCUAKFChHaXkGUf4CHh1aqiMno3A=";
+                  };
+                  useGLVND = false;
+                  useProfiles = false;
+                  postFixup = ''
+                    # rm $out/lib/libEGL*
+                    # rm $out/lib/libGL*
+                    # rm $out/lib/libOpenGL*
+                    # rm $out/lib/libglx*
+                    # rm $out/lib/libnvcuvid*
+                  '';
+                });
             forge = self.callPackage ./forge.nix { };
             arrayfire = self.callPackage ./arrayfire.nix { };
           })
@@ -89,18 +116,27 @@
         rev = "1.10.0";
         sha256 = "sha256-JyyNaTrtoSGiMP7tVUu9lFL07lyfJzRTVtx8yGy6/BI=";
       };
+      spdlog = fetchFromGitHub {
+        owner = "gabime";
+        repo = "spdlog";
+        rev = "v1.9.2";
+        hash = "sha256-GSUdHtvV/97RyDKy8i+ticnSlQCubGGWHg4Oo+YAr8Y=";
+      };
 
     in
     {
       packages = {
         default = pkgs.arrayfire;
+        drivers = pkgs.nvidiaComputeDrivers;
         arrayfire = pkgs.arrayfire;
         arrayfire-cuda = pkgs.arrayfire.override {
           withCuda = true;
-          cudaPackages = pkgs.cudaPackages_12_0;
+          cudaPackages = pkgs.cudaPackages_12;
+          inherit (pkgs) nvidiaComputeDrivers;
         };
         arrayfire-opencl = pkgs.arrayfire.override {
           withOpenCL = true;
+          inherit (pkgs) nvidiaComputeDrivers;
         };
         forge = pkgs.forge;
         openblas = pkgs.openblas;
@@ -108,7 +144,6 @@
         lapack = pkgs.lapack;
       };
       devShells.default = pkgs.mkShell {
-        packages = [ pkgs.pkg-config ];
         buildInputs = with pkgs; [
           blas
           lapack
@@ -127,11 +162,11 @@
           ocl-icd
           opencl-clhpp
           span-lite
-          fmt
-          spdlog.out
-          spdlog.dev
-          cudaPackages_11_4.cudatoolkit
-          cudaPackages_11_4.cudnn
+          fmt_9
+          # spdlog.out
+          # spdlog.dev
+          # cudaPackages_12.cudatoolkit # _11_4.cudatoolkit
+          # cudaPackages_12.cudnn # _11_4.cudnn
         ];
         nativeBuildInputs = with pkgs; [
           cmake
@@ -141,52 +176,58 @@
           valgrind
           git
           clinfo
-          nixgl.auto.nixGLDefault
+          # nixgl.auto.nixGLDefault
           nixpkgs-fmt
-          neovim
+          # neovim
         ];
         shellHook = ''
-                    prepare_sources() {
-                      mkdir -p ./extern/af_glad-src
-                      mkdir -p ./extern/af_threads-src
-                      mkdir -p ./extern/af_assets-src
-                      mkdir -p ./extern/af_test_data-src
-                      mkdir -p ./extern/ocl_clfft-src
-                      mkdir -p ./extern/ocl_clblast-src
-                      mkdir -p ./extern/nv_cub-src
-                      cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
-                      cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
-                      cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
-                      cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
-                      cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
-                      cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
-                      cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
+          prepare_sources() {
+            mkdir -p ./extern/af_glad-src
+            mkdir -p ./extern/af_threads-src
+            mkdir -p ./extern/af_assets-src
+            mkdir -p ./extern/af_test_data-src
+            mkdir -p ./extern/ocl_clfft-src
+            mkdir -p ./extern/ocl_clblast-src
+            mkdir -p ./extern/nv_cub-src
+            mkdir -p ./extern/spdlog-src
+            cp -R --no-preserve=mode,ownership ${glad}/* ./extern/af_glad-src/
+            cp -R --no-preserve=mode,ownership ${threads}/* ./extern/af_threads-src/
+            cp -R --no-preserve=mode,ownership ${assets}/* ./extern/af_assets-src/
+            cp -R --no-preserve=mode,ownership ${test-data}/* ./extern/af_test_data-src/
+            cp -R --no-preserve=mode,ownership ${clfft}/* ./extern/ocl_clfft-src/
+            cp -R --no-preserve=mode,ownership ${clblast}/* ./extern/ocl_clblast-src/
+            cp -R --no-preserve=mode,ownership ${cub}/* ./extern/nv_cub-src/
+            cp -R --no-preserve=mode,ownership ${spdlog}/* ./extern/spdlog-src/
 
-                      substituteInPlace src/api/unified/symbol_manager.cpp \
-                        --replace '"/opt/arrayfire-3/lib/",' \
-                                  "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
+            # substituteInPlace src/api/unified/symbol_manager.cpp \
+            #   --replace '"/opt/arrayfire-3/lib/",' \
+            #             "\"$out/lib/\", \"/opt/arrayfire-3/lib/\","
 
-                      substituteInPlace CMakeLists.txt \
-                        --replace ' QUIET ' ' ' \
-                        --replace ' QUIET)' ')' \
-                        --replace 'find_package(MKL)' '# find_package(MKL)' \
-                        --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
-          find_package(BLAS)'
-                      substituteInPlace src/backend/cuda/CMakeLists.txt \
-                        --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
-                                  'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
-                      substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
-                        --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
-                    }
+            # substituteInPlace CMakeLists.txt \
+            #   --replace ' QUIET ' ' ' \
+            #   --replace ' QUIET)' ')' \
+            #   --replace 'find_package(MKL)' '# find_package(MKL)' \
+            substituteInPlace CMakeLists.txt \
+              --replace 'find_package(BLAS)' 'set(BLA_VENDOR Generic)
+              find_package(BLAS)'
+            # substituteInPlace src/backend/cuda/CMakeLists.txt \
+            #   --replace 'CUDA_LIBRARIES_PATH ''${CUDA_cudart_static_LIBRARY}' \
+            #             'CUDA_LIBRARIES_PATH ''${CUDA_cusolver_LIBRARY}'
+            # substituteInPlace CMakeModules/AFconfigure_deps_vars.cmake \
+            #   --replace 'set(BUILD_OFFLINE OFF)' 'set(BUILD_OFFLINE ON)'
+          }
 
-                    export AF_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAF_TEST_WITH_MTX_FILES=OFF -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_FORGE=OFF -DAF_BUILD_OPENCL=ON -DAF_BUILD_CUDA=OFF -DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS' -DAF_USE_RELATIVE_TEST_DIR=OFF -DCMAKE_CXX_FLAGS=-DSPDLOG_FMT_EXTERNAL=1"
-                    export LD_LIBRARY_PATH=${pkgs.freeimage}/lib:${pkgs.cudaPackages_11_4.cudatoolkit}/lib64:$LD_LIBRARY_PATH
+          # export AF_CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DAF_TEST_WITH_MTX_FILES=OFF -DAF_BUILD_EXAMPLES=OFF -DAF_BUILD_FORGE=OFF -DAF_BUILD_OPENCL=ON -DAF_BUILD_CUDA=OFF -DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS' -DAF_USE_RELATIVE_TEST_DIR=OFF"
+          # export LD_LIBRARY_PATH=$LD_LIBRARY_PATH
+          export OCL_ICD_VENDORS=${pkgs.nvidiaComputeDrivers}/etc/OpenCL/vendors
+          export LD_LIBRARY_PATH=${pkgs.nvidiaComputeDrivers}/lib:${pkgs.freeimage}/lib:${pkgs.forge}/lib:$LD_LIBRARY_PATH
 
-                    export MESA_PATH=${pkgs.mesa}
-                    export MESA_DRIVERS_PATH=${pkgs.mesa.drivers}
-                    export GLVD_PATH=${pkgs.libglvnd}
-                    export CUDATOOLKIT=${pkgs.cudaPackages_11_4.cudatoolkit}
-                    export NVRTC_PATH=${pkgs.cudaPackages_11_4.cuda_nvrtc}
+          export MESA_PATH=${pkgs.mesa}
+          export MESA_DRIVERS_PATH=${pkgs.mesa.drivers}
+          export GLVD_PATH=${pkgs.libglvnd}
+          export BOOST_PATH=${pkgs.boost.out}
+          export BOOST_DEV_PATH=${pkgs.boost.dev}
+          export DRIVERS=${pkgs.nvidiaComputeDrivers}
         '';
       };
       formatter = pkgs.nixpkgs-fmt;
