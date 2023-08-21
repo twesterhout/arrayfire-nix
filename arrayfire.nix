@@ -96,6 +96,7 @@ stdenv.mkDerivation rec {
     "-DAF_BUILD_EXAMPLES=OFF"
     "-DAF_COMPUTE_LIBRARY='FFTW/LAPACK/BLAS'"
     "-DAF_TEST_WITH_MTX_FILES=OFF"
+    "-DAF_WITH_SPDLOG_HEADER_ONLY=ON"
     "-DAF_BUILD_FORGE=OFF"
     (if withCPU then "-DAF_BUILD_CPU=ON" else "-DAF_BUILD_CPU=OFF")
     (if withOpenCL then "-DAF_BUILD_OPENCL=ON" else "-DAF_BUILD_OPENCL=OFF")
@@ -164,7 +165,6 @@ stdenv.mkDerivation rec {
     ocl-icd
     opencl-clhpp
     span-lite
-    spdlog
   ]
   ++ lib.optionals withCuda [
     cudaPackages.cudatoolkit
