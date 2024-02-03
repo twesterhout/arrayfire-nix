@@ -1,14 +1,9 @@
 {
   description = "Nix flake for ArrayFire";
 
-  nixConfig = {
-    extra-substituters = "https://halide-haskell.cachix.org";
-    extra-trusted-public-keys = "halide-haskell.cachix.org-1:cFPqtShCsH4aNjn2q4PHb39Omtd/FWRhrkTBcSrtNKQ=";
-  };
-
   inputs = {
-    # nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    nixpkgs.url = "github:twesterhout/nixpkgs/arrayfire-3.9.0";
+    nixpkgs.url = "github:nixos/nixpkgs";
+    # nixpkgs.url = "github:twesterhout/nixpkgs/arrayfire-3.9.0";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -70,12 +65,12 @@
         cudaHash = "sha256-/8LYniM9JCftsf9fQ2AoqUs++G54+X4IjhHZBcgugAE=";
       };
 
-      pkgsFor = system: overlays: import inputs.nixpkgs {
-        inherit system overlays;
+      pkgsFor = system: overlays: import inputs.nixpkgs ({ inherit system overlays; }
+        // inputs.nixpkgs.lib.optionalAttrs (builtins.length overlays > 0) {
         config.allowUnfree = true;
         config.cudaSupport = true;
         config.nvidia.acceptLicense = true;
-      };
+      });
     in
     {
       packages = inputs.flake-utils.lib.eachDefaultSystemMap (system:
@@ -99,7 +94,7 @@
       inherit overlayBuilder;
       overlays = {
         default = overlayBuilder { cudaArch = null; cudaVersion = null; cudaHash = null; };
-        inherit tesla_535_86_10;
+        inherit tesla_535_86_10 tesla_535_104_12;
       };
     };
 }
